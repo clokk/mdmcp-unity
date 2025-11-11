@@ -1,0 +1,24 @@
+{
+	"name": "Clokk.MDMCP.Editor",
+	"rootNamespace": "MCP",
+	"references": [
+		"UnityEditor",
+		"UnityEngine.CoreModule",
+		"UnityEngine.UI",
+		"Unity.TextMeshPro",
+		"Unity.Newtonsoft.Json"
+	],
+	"includePlatforms": [
+		"Editor"
+	],
+	"excludePlatforms": [],
+	"allowUnsafeCode": false,
+	"overrideReferences": false,
+	"precompiledReferences": [],
+	"autoReferenced": true,
+	"defineConstraints": [],
+	"versionDefines": [],
+	"noEngineReferences": false
+}
+
+
