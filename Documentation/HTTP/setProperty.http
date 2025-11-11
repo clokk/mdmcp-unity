@@ -1,0 +1,14 @@
+POST http://localhost:43210
+Content-Type: application/json
+
+{
+  "action": "setProperty",
+  "payload": {
+    "targetPath": "/Player",
+    "componentName": "PlayerController",
+    "propertyName": "speed",
+    "propertyValue": "10.5"
+  }
+}
+
+

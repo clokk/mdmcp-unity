@@ -1,4 +1,3 @@
-using MCP;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -6,58 +5,97 @@ using System.Reflection;
 
 namespace MCP.Actions
 {
-	public class ListActionsAction : IEditorAction
+	public class ListActionsAction : MCP.IEditorAction
 	{
 		public string ActionName => "listActions";
 
-		public object Execute(EditorActionPayload payload)
+		public object Execute(MCP.EditorActionPayload payload)
 		{
 			var actions = new List<object>();
 
 			var actionTypes = AppDomain.CurrentDomain.GetAssemblies()
 				.SelectMany(s => s.GetTypes())
-				.Where(p => typeof(IEditorAction).IsAssignableFrom(p) && !p.IsInterface && !p.IsAbstract);
+				.Where(p => ImplementsIEditorAction(p) && !p.IsInterface && !p.IsAbstract);
 
-			foreach (var actionType in actionTypes)
+			// Deduplicate by ActionName, preferring project implementations over package ones
+			var selectedByName = new Dictionary<string, Type>(StringComparer.OrdinalIgnoreCase);
+			foreach (var type in actionTypes)
 			{
 				try
 				{
-					var instance = (IEditorAction)Activator.CreateInstance(actionType);
-					var actionName = instance.ActionName;
+					var temp = Activator.CreateInstance(type);
+					var name = type.GetProperty("ActionName")?.GetValue(temp) as string;
+					if (string.IsNullOrEmpty(name)) continue;
+
+					if (selectedByName.TryGetValue(name, out var existingType))
+					{
+						bool existingIsPackage = IsPackageAssembly(existingType.Assembly);
+						bool incomingIsPackage = IsPackageAssembly(type.Assembly);
+						// Prefer project (non-package) over package
+						if (existingIsPackage && !incomingIsPackage)
+						{
+							selectedByName[name] = type;
+						}
+						// else keep existing
+					}
+					else
+					{
+						selectedByName[name] = type;
+					}
+				}
+				catch { /* ignore */ }
+			}
+
+			foreach (var kv in selectedByName)
+			{
+				var actionType = kv.Value;
+				try
+				{
+					var instance = Activator.CreateInstance(actionType);
+					var actionName = actionType.GetProperty("ActionName")?.GetValue(instance) as string;
 					if (string.IsNullOrEmpty(actionName)) continue;
 
 					var actionInfo = new Dictionary<string, object>
 					{
 						["name"] = actionName,
 						["type"] = actionType.Name,
-						["category"] = "Core"
+						["category"] = IsPackageAssembly(actionType.Assembly) ? "Core" : "Project"
 					};
 
-					var attr = actionType.GetCustomAttribute<MCPActionAttribute>();
-					if (attr != null)
+					// Try to read MCPActionAttribute reflectively if present (avoid compile-time dependency)
+					var customAttrs = actionType.GetCustomAttributes(false);
+					var mcpAttr = customAttrs.FirstOrDefault(a => string.Equals(a.GetType().Name, "MCPActionAttribute", StringComparison.Ordinal));
+					if (mcpAttr != null)
 					{
-						actionInfo["category"] = attr.Category ?? "Core";
-						if (!string.IsNullOrEmpty(attr.Description))
-							actionInfo["description"] = attr.Description;
-						if (!string.IsNullOrEmpty(attr.ExamplePayload))
+						try
 						{
-							try
+							var categoryProp = mcpAttr.GetType().GetProperty("Category");
+							var descProp = mcpAttr.GetType().GetProperty("Description");
+							var exampleProp = mcpAttr.GetType().GetProperty("ExamplePayload");
+							var cat = categoryProp?.GetValue(mcpAttr) as string;
+							if (!string.IsNullOrEmpty(cat)) actionInfo["category"] = cat;
+							var desc = descProp?.GetValue(mcpAttr) as string;
+							if (!string.IsNullOrEmpty(desc)) actionInfo["description"] = desc;
+							var example = exampleProp?.GetValue(mcpAttr) as string;
+							if (!string.IsNullOrEmpty(example))
 							{
-								actionInfo["examplePayload"] = Newtonsoft.Json.JsonConvert.DeserializeObject(attr.ExamplePayload);
-							}
-							catch
-							{
-								actionInfo["examplePayload"] = attr.ExamplePayload;
+								try
+								{
+									actionInfo["examplePayload"] = Newtonsoft.Json.JsonConvert.DeserializeObject(example);
+								}
+								catch
+								{
+									actionInfo["examplePayload"] = example;
+								}
 							}
 						}
+						catch { /* ignore attribute parse errors */ }
 					}
 
 					if (!actionInfo.ContainsKey("description"))
 					{
-						if (actionType.Namespace?.Contains("Project") == true || actionType.Name.Contains("Badge") || actionType.Name.Contains("Project"))
-							actionInfo["category"] = "Project";
-						else
-							actionInfo["category"] = "Core";
+						// Fall back to assembly heuristic if attribute absent
+						actionInfo["category"] = IsPackageAssembly(actionType.Assembly) ? "Core" : "Project";
 					}
 
 					actions.Add(actionInfo);
@@ -74,13 +112,33 @@ namespace MCP.Actions
 				return $"{dict?["category"]}_{dict?["name"]}";
 			}).ToList();
 
-			return ActionResponse.Ok(new
+			// Return plain object; server will wrap into envelope
+			return new
 			{
 				totalCount = actions.Count,
 				coreCount = actions.Count(a => (a as Dictionary<string, object>)?["category"]?.ToString() == "Core"),
 				projectCount = actions.Count(a => (a as Dictionary<string, object>)?["category"]?.ToString() == "Project"),
 				actions = actions
-			});
+			};
+		}
+
+		private static bool IsPackageAssembly(Assembly assembly)
+		{
+			try
+			{
+				var name = assembly?.GetName()?.Name;
+				return string.Equals(name, "Clokk.MDMCP.Editor", StringComparison.Ordinal);
+			}
+			catch { return false; }
+		}
+
+		private static bool ImplementsIEditorAction(Type t)
+		{
+			try
+			{
+				return t.GetInterfaces().Any(i => string.Equals(i.FullName, "MCP.IEditorAction", StringComparison.Ordinal));
+			}
+			catch { return false; }
 		}
 	}
 }

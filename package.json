@@ -25,6 +25,11 @@
       "displayName": "Hello Action",
       "description": "A simple sample action implementing IEditorAction.",
       "path": "Samples~/HelloAction"
+    },
+    {
+      "displayName": "Extensions Template",
+      "description": "Template asmdef and sample action for project-specific MCP extensions.",
+      "path": "Samples~/ExtensionsTemplate"
     }
   ]
 }

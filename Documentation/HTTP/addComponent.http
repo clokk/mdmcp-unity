@@ -1,0 +1,12 @@
+POST http://localhost:43210
+Content-Type: application/json
+
+{
+  "action": "addComponent",
+  "payload": {
+    "targetPath": "/Player",
+    "componentName": "UnityEngine.Rigidbody"
+  }
+}
+
+

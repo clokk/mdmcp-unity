@@ -18,12 +18,16 @@ using Newtonsoft.Json.Linq;
 public static class MDMCPServerUnity
 {
     private static readonly HttpListener listener = new HttpListener();
-    private const string ServerURL = "http://localhost:43210/";
     private static string _lastContextJson = "{}";
     private static readonly object _lock = new object();
     private static readonly Dictionary<string, IEditorAction> _actions = new Dictionary<string, IEditorAction>();
     private static Thread _serverThread;
     private static object _lastActionResponse; // last action envelope (ok/result/error)
+
+	private const string AutoStartKey = "MDMCP.AutoStart";
+	private const string PortKey = "MDMCP.Port";
+
+	public static bool IsRunning => listener.IsListening;
 
     static MDMCPServerUnity()
     {
@@ -32,7 +36,12 @@ public static class MDMCPServerUnity
         EditorSceneManager.activeSceneChanged += (a, b) => UpdateContext();
         EditorApplication.update += OnEditorUpdate;
         UpdateContext(); // Initial context update
-        StartServer(); // Automatically start the server on launch/reload.
+		// Auto-start based on EditorPrefs
+		bool autoStart = EditorPrefs.GetBool(AutoStartKey, true);
+		if (autoStart)
+		{
+			StartServer(); // Start the server on launch/reload if enabled.
+		}
     }
 
     private static float _lastContextUpdateTime = 0f;
@@ -59,21 +68,37 @@ public static class MDMCPServerUnity
         }
     }
 
-    private static void RegisterActions()
+	private static void RegisterActions()
     {
         _actions.Clear();
         var actionTypes = AppDomain.CurrentDomain.GetAssemblies()
             .SelectMany(s => s.GetTypes())
-            .Where(p => typeof(IEditorAction).IsAssignableFrom(p) && !p.IsInterface);
+			.Where(p => typeof(IEditorAction).IsAssignableFrom(p) && !p.IsInterface && !p.IsAbstract);
 
         foreach (var type in actionTypes)
         {
             try
             {
                 IEditorAction actionInstance = (IEditorAction)Activator.CreateInstance(type);
-                if (!string.IsNullOrEmpty(actionInstance.ActionName))
+				if (!string.IsNullOrEmpty(actionInstance.ActionName))
                 {
-                    _actions[actionInstance.ActionName] = actionInstance;
+					string name = actionInstance.ActionName;
+					if (_actions.TryGetValue(name, out var existing))
+					{
+						// Prefer project implementations over package ones on duplicates
+						bool existingIsPackage = IsPackageAssembly(existing.GetType().Assembly.GetName().Name);
+						bool incomingIsPackage = IsPackageAssembly(type.Assembly.GetName().Name);
+						if (existingIsPackage && !incomingIsPackage)
+						{
+							_actions[name] = actionInstance;
+							Debug.Log($"[MDMCP] Using project override for action '{name}' ({type.Name} over {existing.GetType().Name}).");
+						}
+						// else keep existing
+					}
+					else
+					{
+						_actions[name] = actionInstance;
+					}
                 }
             }
             catch (Exception ex)
@@ -85,8 +110,8 @@ public static class MDMCPServerUnity
     }
 
 
-    [MenuItem("Markdown/Start MCP Server")]
-    private static void StartServer()
+	[MenuItem("Markdown/Start MCP Server")]
+	public static void StartServer()
     {
         if (listener.IsListening)
         {
@@ -96,9 +121,10 @@ public static class MDMCPServerUnity
         
         RegisterActions();
         
-        Debug.Log("Starting MDMCP Server on " + ServerURL);
+		var serverUrl = GetServerURL();
+		Debug.Log("Starting MDMCP Server on " + serverUrl);
         listener.Prefixes.Clear();
-        listener.Prefixes.Add(ServerURL);
+		listener.Prefixes.Add(serverUrl);
         listener.Start();
         
         _serverThread = new Thread(() => Listen());
@@ -107,7 +133,7 @@ public static class MDMCPServerUnity
     }
 
     [MenuItem("Markdown/Stop MCP Server")]
-    private static void StopServer()
+	public static void StopServer()
     {
         if (listener.IsListening)
         {
@@ -168,7 +194,7 @@ public static class MDMCPServerUnity
                     object responseObject = null;
                     
                     // Determine if this action should run synchronously
-                    bool defaultSync = (command.action == "wait" || command.action == "getSceneHierarchy" || command.action == "getGameObjectDetails" || command.action == "getPrefabDetails" || command.action == "takeScreenshot" || command.action == "getContext" || command.action == "listActions" || command.action == "findGameObjects");
+					bool defaultSync = (command.action == "wait" || command.action == "getSceneHierarchy" || command.action == "getGameObjectDetails" || command.action == "getPrefabDetails" || command.action == "takeScreenshot" || command.action == "getContext" || command.action == "listActions" || command.action == "findGameObjects" || command.action == "ping");
                     bool isWriteAction = (command.action == "modifyPrefab" || command.action == "setProperty" || command.action == "setSerializedProperty" || command.action == "duplicateAsset");
                     bool shouldSync = defaultSync || (isWriteAction && syncRequested);
 
@@ -335,6 +361,24 @@ public static class MDMCPServerUnity
             Debug.LogError($"[MDMCP] Failed to update context: {ex.Message}");
         }
     }
+
+	private static string GetServerURL()
+	{
+		int port = 43210;
+		try
+		{
+			port = EditorPrefs.GetInt(PortKey, 43210);
+			if (port < 1024 || port > 65535) port = 43210;
+		}
+		catch { port = 43210; }
+		return $"http://localhost:{port}/";
+	}
+
+	private static bool IsPackageAssembly(string assemblyName)
+	{
+		// Actions compiled from this package have the asmdef name below
+		return assemblyName == "Clokk.MDMCP.Editor";
+	}
 }
 #endif
 

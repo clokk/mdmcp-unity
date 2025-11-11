@@ -1,0 +1,8 @@
+POST http://localhost:43210
+Content-Type: application/json
+
+{
+  "action": "listActions"
+}
+
+

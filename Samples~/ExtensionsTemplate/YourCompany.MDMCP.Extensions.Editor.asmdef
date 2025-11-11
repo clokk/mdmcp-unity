@@ -1,0 +1,12 @@
+{
+	"name": "YourCompany.MDMCP.Extensions.Editor",
+	"references": [
+		"Clokk.MDMCP.Editor"
+	],
+	"includePlatforms": [
+		"Editor"
+	],
+	"noEngineReferences": false
+}
+
+

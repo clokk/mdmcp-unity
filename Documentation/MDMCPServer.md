@@ -198,7 +198,33 @@ All actions are invoked by sending a POST with a JSON body: `{ "action": "name",
 
 Baseline shipped actions in this package:
 
+| Action | Purpose | Payload DTO |
+| --- | --- | --- |
+| `ping` | Health check, returns ok:true | — |
+| `getContext` | Editor state and last envelope | — |
+| `listActions` | Discover available actions | — |
+| `setPlayMode` | Enter/exit play mode | `bool` |
+| `wait` | Delay for seconds | `float` |
+| `executeUIEvent` | Simulate UI event (e.g., click) | `ExecuteUIEventPayload` |
+| `getSceneHierarchy` | Retrieve active scene hierarchy | — |
+| `findGameObjects` | Find by component/name pattern | `FindGameObjectsPayload` |
+| `getGameObjectDetails` | Inspect component/fields | — |
+| `getPrefabDetails` | Inspect prefab asset | `GetPrefabDetailsPayload` |
+| `getPrefabHierarchy` | Prefab hierarchy inspection | — |
+| `modifyPrefab` | Synchronously modify prefab | `ModifyPrefabPayload` |
+| `openScene` | Open a scene asset | `OpenScenePayload` |
+| `selectInProjectWindow` | Select asset in Project | `string path` |
+| `setProperty` | Set a public field/property | `UniversalSetPropertyPayload` |
+| `setSerializedProperty` | SerializedProperty setter | `SetSerializedPropertyPayload` |
+| `setSortingLayer` | Set sorting layer | `SetSortingLayerPayload` |
+| `addComponent` | Add a component to a GameObject | `AddRemoveComponentPayload` |
+| `removeComponent` | Remove component(s) from GameObject | `AddRemoveComponentPayload` (uses `all`) |
+| `setMultipleProperties` | Batch set multiple properties | `SetMultiplePropertiesPayload` |
+
+See the end-to-end test workflow for usage context: Section 7.
+
 ### Context & Discovery
+- `ping`
 - `getContext`
 - `listActions`
 
@@ -221,6 +247,9 @@ Baseline shipped actions in this package:
 - `setProperty`
 - `setSerializedProperty`
 - `setSortingLayer`
+- `addComponent`
+- `removeComponent`
+- `setMultipleProperties`
 
 Synchronous `modifyPrefab` example:
 ```json
@@ -364,5 +393,13 @@ Pretty‑print JSON responses using `jq` or `python -m json.tool`.
 - Logs & filtering: All server logs are prefixed with `[MDMCP]`.
 - Breakpoints: Set breakpoints in `Packages/com.clokk.mdmcp-unity/Editor/MDMCPServerUnity.cs` or in any of your project’s extension actions (implementations of `IEditorAction`).
 - Working directory: Examples referencing `.cursor/temp_payload.json` assume commands are run from the project root. Use absolute paths otherwise.
+
+## 10. Safety & Operability
+
+- Localhost-only: The server listens on `localhost` only. Exposing externally is not supported.
+- Port configuration: Change the port via `Markdown > MCP Settings…` (default `43210`). The server restarts when you change the port if running.
+- Auto-start toggle: Enable/disable in `Markdown > MCP Settings…`.
+- Response envelopes: All responses are wrapped with `{ ok, result, error?, warnings?, requestId? }`.
+- Async by default: State‑changing actions run async unless `payload.sync` is `true`.
 
 
