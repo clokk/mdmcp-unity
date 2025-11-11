@@ -7,14 +7,18 @@ MDMCP (Markdown MCP) Server is an HTTP-based automation bridge for the Unity Edi
 Add this line to your project's `Packages/manifest.json`:
 
 ```json
-"com.clokk.mdmcp-unity": "https://github.com/clokk/mdmcp-unity.git#v0.1.0"
+"com.clokk.mdmcp-unity": "https://github.com/clokk/mdmcp-unity.git#v0.2.1"
 ```
 
 Or use the Package Manager "Add package from Git URL…" with:
 
 ```
-https://github.com/clokk/mdmcp-unity.git#v0.1.0
+https://github.com/clokk/mdmcp-unity.git#v0.2.1
 ```
+
+GUI path:
+- Window → Package Manager → + (Add) → Add package from Git URL…
+- Paste: https://github.com/clokk/mdmcp-unity.git (or a pinned tag as above)
 
 ## Usage
 
@@ -48,6 +52,14 @@ namespace MyCompany.MDMCP.Actions
     }
 }
 ```
+
+Project-specific extensions:
+- Create an Editor asmdef (e.g., `YourCompany.MDMCP.Extensions.Editor`) and reference `Clokk.MDMCP.Editor`
+- Put your `IEditorAction` classes and any payload DTOs there (e.g., `namespace MCP.Payloads`)
+- Validate discovery via `listActions`
+
+Agent context tip:
+- Pass the package guide to your agent: `Packages/com.clokk.mdmcp-unity/Documentation/MDMCPServer.md`
 
 ## License
 

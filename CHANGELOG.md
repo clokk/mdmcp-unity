@@ -10,6 +10,3 @@ All notable changes to this project will be documented in this file.
 - Sample: HelloAction
 
 
-
-## [0.2.0] - 2025-11-11
-- Maintenance release

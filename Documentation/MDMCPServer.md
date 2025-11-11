@@ -1,4 +1,4 @@
-# Unity Editor MCP Server & Workflow Guide
+# MDMCP Server for Unity - Guide
 
 This document provides context and instructions for interacting with a More Context Protocol (MCP) server running inside the Unity Editor. The server allows for programmatic control over the Unity Editor, enabling automation of common tasks and in‑editor testing.
 
@@ -7,6 +7,16 @@ This document provides context and instructions for interacting with a More Cont
 ## 1. Server Overview
 
 The MCP server runs locally at `http://localhost:43210`. It acts as a bridge for tools and scripts to interact with the Unity Editor by sending JSON commands via POST requests. All actions are registered with Unity's Undo system, making them safe to use.
+
+### Install (UPM - Git URL)
+
+Recommended GUI path:
+
+- Window → Package Manager → + (Add) → Add package from Git URL…
+- Paste: `https://github.com/clokk/mdmcp-unity.git`
+- Optionally pin to a specific tag for reproducibility, e.g.: `https://github.com/clokk/mdmcp-unity.git#v0.2.1`
+
+Quick URL: `https://github.com/clokk/mdmcp-unity.git`
 
 The server's internal architecture is modular and extensible. Each action is implemented in its own class that inherits from the `IEditorAction` interface. On startup, the server uses reflection to automatically discover and register available actions across all loaded editor assemblies. This makes it easy to add functionality: simply create a new class that implements `IEditorAction`, and the server will handle discovery.
 
@@ -62,6 +72,14 @@ For implementation details, see the scripts in `Packages/com.clokk.mdmcp-unity/E
 - `EditorActionPayload.cs`: Flexible `payload` container (JSON token).
 
 - `MCPUtils.cs`: Common utilities for property setting, path resolution, type finding, object serialization, etc.
+
+---
+
+## 2.1. AI Agent Context Recommendation
+
+If you are using an AI assistant/agent to automate or test Editor tasks, include this guide file in the agent’s context so it understands the API and envelopes:
+
+- `Packages/com.clokk.mdmcp-unity/Documentation/MDMCPServer.md`
 
 ---
 
@@ -223,7 +241,49 @@ Note: This package ships only the above baseline actions. Projects are expected 
 
 ---
 
-## 6. Complete End-to-End Test Workflow
+## 6. Extending MDMCP in Your Project (Project-Specific Actions)
+
+Add custom actions in your own project without forking the package.
+
+### Recommended structure
+1) Create an Editor assembly for extensions (example):
+   - Folder: `Assets/Editor/MDMCPExtensions/`
+   - Add an asmdef (e.g., `YourCompany.MDMCP.Extensions.Editor.asmdef`)
+   - References: `Clokk.MDMCP.Editor` (from this package), `UnityEditor`, `UnityEngine.CoreModule`
+
+2) Implement actions
+   - Create classes implementing `MCP.IEditorAction` (no registration required; reflection-based discovery)
+   - Example:
+     ```csharp
+     using MCP;
+     namespace YourCompany.MDMCP.Actions
+     {
+         public class HelloAction : IEditorAction
+         {
+             public string ActionName => "hello";
+             public object Execute(EditorActionPayload payload)
+             {
+                 return ActionResponse.Ok(new { message = "Hello from project!" });
+             }
+         }
+     }
+     ```
+
+3) Define any payload DTOs used by your actions
+   - Place DTOs in the same extensions assembly (e.g., `namespace MCP.Payloads`)
+   - Deserialize with `payload.payload.ToObject<YourPayload>()`
+
+4) Keep dependencies project-local
+   - Avoid adding project-specific logic to the package
+   - Keep game-specific editors/data and DTOs in your extension assembly
+
+5) Test discovery
+   - Use `listActions` to confirm your new actions appear
+   - Run your action with a minimal payload and validate `ok:true` envelope
+
+---
+
+## 7. Complete End-to-End Test Workflow
 
 ```bash
 # 1. Check initial state
@@ -284,7 +344,7 @@ Key validation points:
 
 ---
 
-## 7. Automation & Payload Tips
+## 8. Automation & Payload Tips
 
 Prefer writing complex payloads to a temporary file and use `curl --data-binary @file.json` to avoid quoting issues.
 
@@ -298,7 +358,7 @@ Pretty‑print JSON responses using `jq` or `python -m json.tool`.
 
 ---
 
-## 8. Developer Notes & Debugging
+## 9. Developer Notes & Debugging
 
 - Auto‑start: The server auto‑starts on domain reloads (`[InitializeOnLoad]` in `MDMCPServerUnity.cs`). Use `Markdown > Start MCP Server` and `Markdown > Stop MCP Server` to control manually.
 - Logs & filtering: All server logs are prefixed with `[MDMCP]`.
