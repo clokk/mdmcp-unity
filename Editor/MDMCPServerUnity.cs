@@ -10,7 +10,6 @@ using System.Collections.Generic;
 using UnityEditor.SceneManagement;
 using System.Linq;
 using MCP; // Use the new generic namespace
-using Assets.Editor.MCP.Actions; // To find the actions
 using Newtonsoft.Json; // Use Newtonsoft for more robust JSON handling
 using System.Threading;
 using Newtonsoft.Json.Linq;
@@ -154,7 +153,7 @@ public static class MDMCPServerUnity
                     // Extract request ID if present
                     string requestId = null;
                     bool syncRequested = false;
-                    if (commandJson.contains("requestId"))
+                    if (commandJson.Contains("requestId"))
                     {
                         try
                         {
