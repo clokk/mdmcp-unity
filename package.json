@@ -1,7 +1,7 @@
 {
   "name": "com.clokk.mdmcp-unity",
   "displayName": "MDMCP Server for Unity",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "unity": "2021.3",
   "description": "Markdown MCP (MDMCP) Server for Unity Editor: an HTTP-based automation bridge with extensible editor actions.",
   "keywords": [
