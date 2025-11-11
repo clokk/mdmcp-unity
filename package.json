@@ -1,7 +1,7 @@
 {
   "name": "com.clokk.mdmcp-unity",
   "displayName": "MDMCP Server for Unity",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "unity": "2021.3",
   "description": "Markdown MCP (MDMCP) Server for Unity Editor: an HTTP-based automation bridge with extensible editor actions.",
   "keywords": [
@@ -17,6 +17,14 @@
     "url": "https://github.com/clokk"
   },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/clokk/mdmcp-unity.git"
+  },
+  "homepage": "https://github.com/clokk/mdmcp-unity",
+  "bugs": {
+    "url": "https://github.com/clokk/mdmcp-unity/issues"
+  },
   "dependencies": {
     "com.unity.nuget.newtonsoft-json": "3.0.2"
   },

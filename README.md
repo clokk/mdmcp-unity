@@ -1,7 +1,8 @@
 # MDMCP Server for Unity
 
-[![version](https://img.shields.io/badge/version-v0.2.3-blue.svg)](https://github.com/clokk/mdmcp-unity/releases)
+[![version](https://img.shields.io/badge/version-v0.2.4-blue.svg)](https://github.com/clokk/mdmcp-unity/releases)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![openupm](https://img.shields.io/badge/openupm-com.clokk.mdmcp--unity-blue.svg)](https://openupm.com/packages/com.clokk.mdmcp-unity/)
 
 MDMCP (Markdown MCP) Server is an HTTP-based automation bridge for the Unity Editor. It lets you inspect, modify, and test your project via JSON requests, and is fully extensible via `IEditorAction` plugins.
 
@@ -21,13 +22,13 @@ MDMCP (Markdown MCP) Server is an HTTP-based automation bridge for the Unity Edi
 Add this line to your project's `Packages/manifest.json`:
 
 ```json
-"com.clokk.mdmcp-unity": "https://github.com/clokk/mdmcp-unity.git#v0.2.3"
+"com.clokk.mdmcp-unity": "https://github.com/clokk/mdmcp-unity.git#v0.2.4"
 ```
 
 Or use the Package Manager "Add package from Git URL…" with:
 
 ```
-https://github.com/clokk/mdmcp-unity.git#v0.2.3
+https://github.com/clokk/mdmcp-unity.git#v0.2.4
 ```
 
 GUI path:
@@ -40,15 +41,31 @@ GUI path:
 - Stop the server: `Markdown > Stop MCP Server`
 - Default URL: `http://localhost:43210/`
 
-### OpenUPM (optional)
+### OpenUPM (scoped registry)
 
-If published, you can add via OpenUPM CLI:
+Option A: CLI
 
 ```bash
 openupm add com.clokk.mdmcp-unity
 ```
 
-Or add a scoped registry in your `Packages/manifest.json` and then search for `com.clokk.mdmcp-unity` in Package Manager (My Registries).
+Option B: Scoped registry (manifest.json)
+
+1) Add registry:
+
+```json
+{
+  "scopedRegistries": [
+    {
+      "name": "OpenUPM",
+      "url": "https://package.openupm.com",
+      "scopes": [ "com.clokk" ]
+    }
+  ]
+}
+```
+
+2) In Package Manager, switch to My Registries and install by name: `com.clokk.mdmcp-unity`
 
 ### Quickstart (curl)
 
@@ -87,6 +104,13 @@ async function main() {
 }
 main();
 ```
+
+### Prompting in Cursor
+
+- Give the agent concrete context and speak in natural language about what you want to automate with MCP actions.
+- Always attach the package guide: `Packages/com.clokk.mdmcp-unity/Documentation/MDMCPServer.md` (or `MDMCPServer.md` if copied locally).
+- Prompt naturally, e.g.: “Enter play mode, wait 2s, click /Canvas/MainMenu/PlayButton, then return getContext.”
+- Ensure the Unity Editor is open, compiled (no pending compilation), and the Editor window is active before running MCP commands.
 
 ## Extend
 
