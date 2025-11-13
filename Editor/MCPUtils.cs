@@ -10,6 +10,8 @@ namespace MCP
 {
 	public static class MCPUtils
 	{
+		private static double _lastHighlightTime = 0.0;
+
 		public static void SetProperty(UnityEngine.Object targetObject, string propertyName, string propertyValueRaw)
 		{
 			var member = targetObject.GetType().GetMember(propertyName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
@@ -541,6 +543,130 @@ namespace MCP
 			{
 				Debug.LogError($"[MDMCP] Type '{assetTypeStr}' is not a ScriptableObject.");
 			}
+		}
+
+		public static void Highlight(UnityEngine.Object target, bool frameSceneView)
+		{
+			if (target == null) return;
+			try
+			{
+				ThrottleHighlightIfNeeded();
+				if (target is GameObject)
+				{
+					Selection.activeObject = target;
+					EditorGUIUtility.PingObject(target);
+					if (frameSceneView)
+					{
+						try { SceneView.FrameLastActiveSceneView(); } catch { /* API differences across versions */ }
+					}
+				}
+				else
+				{
+					EditorUtility.FocusProjectWindow();
+					Selection.activeObject = target;
+					EditorGUIUtility.PingObject(target);
+				}
+			}
+			catch { /* ignore */ }
+		}
+
+		public static bool HighlightByScenePath(string targetPath, bool frameSceneView)
+		{
+			if (string.IsNullOrEmpty(targetPath)) return false;
+			var go = FindGameObjectByPath(targetPath);
+			if (go == null) return false;
+			Highlight(go, frameSceneView);
+			return true;
+		}
+
+		public static void HighlightMany(IEnumerable<UnityEngine.Object> targets, bool frameSceneView, int limit, bool firstOnly)
+		{
+			if (targets == null) return;
+			try
+			{
+				var list = targets.Where(t => t != null).ToList();
+				if (list.Count == 0) return;
+				if (firstOnly)
+				{
+					Highlight(list[0], frameSceneView);
+					return;
+				}
+				if (limit > 0 && list.Count > limit) list = list.Take(limit).ToList();
+				ThrottleHighlightIfNeeded();
+				Selection.objects = list.ToArray();
+				if (frameSceneView)
+				{
+					try { SceneView.FrameLastActiveSceneView(); } catch { }
+				}
+				foreach (var t in list)
+				{
+					try { EditorGUIUtility.PingObject(t); } catch { }
+				}
+			}
+			catch { /* ignore */ }
+		}
+
+		public static bool ShouldHighlight(bool? payloadOverride, bool isReadAction)
+		{
+			// Suppress in play mode if configured
+			try
+			{
+				if (EditorApplication.isPlaying && EditorPrefs.GetBool("MDMCP.SuppressHighlightInPlay", false))
+					return false;
+			}
+			catch { }
+
+			// Global setting based on action type
+			bool defaultOn = true;
+			try
+			{
+				if (isReadAction) defaultOn = EditorPrefs.GetBool("MDMCP.AutoHighlightReadActions", true);
+				else defaultOn = EditorPrefs.GetBool("MDMCP.AutoHighlightWriteActions", true);
+			}
+			catch { defaultOn = true; }
+
+			// Per-call override wins
+			if (payloadOverride.HasValue) return payloadOverride.Value;
+			return defaultOn;
+		}
+
+		public static bool GetFrameSceneViewOverride(bool? payloadOverride)
+		{
+			bool frame = true;
+			try { frame = EditorPrefs.GetBool("MDMCP.FrameSceneViewOnHighlight", true); } catch { frame = true; }
+			if (payloadOverride.HasValue) return payloadOverride.Value;
+			return frame;
+		}
+
+		public static (bool firstOnly, int limit) GetMultiSelectPolicy()
+		{
+			int mode = 0;
+			int limit = 8;
+			try { mode = EditorPrefs.GetInt("MDMCP.HighlightMultiSelectMode", 0); } catch { mode = 0; }
+			try { limit = Mathf.Max(1, EditorPrefs.GetInt("MDMCP.AutoHighlightMultiSelectLimit", 8)); } catch { limit = 8; }
+			bool firstOnly = mode == 0;
+			return (firstOnly, limit);
+		}
+
+		private static void ThrottleHighlightIfNeeded()
+		{
+			try
+			{
+				int throttleMs = 150;
+				try { throttleMs = Mathf.Max(0, EditorPrefs.GetInt("MDMCP.HighlightThrottleMs", 150)); } catch { throttleMs = 150; }
+				double now = EditorApplication.timeSinceStartup;
+				if (_lastHighlightTime > 0.0 && throttleMs > 0)
+				{
+					double nextAllowed = _lastHighlightTime + (throttleMs / 1000.0);
+					if (now < nextAllowed)
+					{
+						int sleep = Mathf.CeilToInt((float)((nextAllowed - now) * 1000.0));
+						if (sleep > 0) System.Threading.Thread.Sleep(sleep);
+					}
+				}
+				_lastHighlightTime = EditorApplication.timeSinceStartup;
+			}
+			catch { /* ignore */ }
 		}
 	}
 }

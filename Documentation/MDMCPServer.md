@@ -7,6 +7,7 @@ This document provides context and instructions for interacting with a More Cont
 ## 1. Server Overview
 
 The MCP server runs locally at `http://localhost:43210`. It acts as a bridge for tools and scripts to interact with the Unity Editor by sending JSON commands via POST requests. All actions are registered with Unity's Undo system, making them safe to use.
+The MCP bridge runs in single‑instance mode and targets `http://localhost:$MDMCP_PORT/` (default `43210`). Set the `MDMCP_PORT` environment variable if you change the Unity server port.
 
 ### Install (UPM - Git URL)
 
@@ -53,9 +54,27 @@ For implementation details, see the scripts in `Packages/com.clokk.mdmcp-unity/E
 
 > Sync vs Async
 >
-> Most write actions run asynchronously by default. You can opt into synchronous execution by adding `"sync": true` inside the `payload`. When `sync` is true, the server returns the action's real result (including errors). The latest action envelope is exposed via `getContext` under `lastActionResult`.
+> Write actions now run synchronously by default to support natural‑language flows in IDEs. You no longer need to set `payload.sync` for writes (it is still honored if provided). Read/inspect actions continue to run synchronously. The latest action envelope is exposed via `getContext` under `lastActionResult`.
 
 > Note: If you change MCP server scripts, restart the server via `Markdown > Stop MCP Server` and `Markdown > Start MCP Server` in the Unity Editor.
+
+### MCP Tool Payload Normalization (Bridge)
+- MCP tools (in IDEs) call a Python bridge that forwards requests to Unity. The bridge normalizes several payload shapes into Unity’s `{ \"action\", \"payload\" }` format.
+- Recommended tool payload shape: top‑level args (e.g., `{ \"name\": \"Player\" }`).
+- Accepted normalized forms:
+  - Top‑level dict: `{ \"name\": \"Player\" }`
+  - Nested under `payload`: `{ \"payload\": { \"name\": \"Player\" }, \"sync\": true }` (sync is hoisted into inner)
+  - JSON string under common keys: `{ \"kwargs\": \"{\\\"name\\\":\\\"Player\\\"}\" }`, `{ \"json\": \"{...}\" }`, `{ \"data\": \"{...}\" }`
+  - Single‑key JSON string: `{ \"anything\": \"{...}\" }` (when only one key is present)
+- Direct HTTP (curl, scripts) should always use `{ \"action\": \"...\", \"payload\": { ... } }`.
+- Diagnostics:
+  - Set `MDMCP_BRIDGE_LOG=1` to log action, keys, and payload size before POST on the bridge.
+  - On invalid payloads, Unity logs a compact preview in the Console (e.g., `[MDMCP][createGameObject] Invalid payload: {...}`).
+  - Focus Unity on first tool request: set `MDMCP_BRIDGE_FOCUS=1` (default). Set to `0` to disable. The bridge will bring Unity to the foreground once and call `getContext` to nudge a domain refresh.
+ - Bridge aliases:
+   - `createGameObject` supports `parent` as an alias for `parentPath`. It also supports `path` like `\"/Parent/Child\"` and derives `name=\"Child\"`, `parentPath=\"/Parent\"` when not otherwise provided.
+   - `setParent` supports `gameObject` → `targetPath` and `parent` → `parentPath`.
+   - `highlight` supports `gameObject` → `targetPath`.
 
 ---
 
@@ -157,6 +176,44 @@ curl -X POST http://localhost:43210 -d '{
 ```
 
 Note on Path Resolution: Robust hierarchical scene paths like `/Root/Child/Sub` are supported.
+Root handling: Passing `"/"` as `parentPath` means “place at scene root”.
+
+Create a new GameObject:
+```bash
+# Using name and parentPath
+curl -X POST http://localhost:43210 -d '{
+  "action": "createGameObject",
+  "payload": { "name": "HL_Child", "parentPath": "/HL_Root" }
+}'
+
+# Or using a single path (bridge derives name and parentPath)
+curl -X POST http://localhost:43210 -d '{
+  "action": "createGameObject",
+  "payload": { "path": "/HL_Root/HL_Child" }
+}'
+```
+
+Reparent an existing GameObject:
+```bash
+curl -X POST http://localhost:43210 -d '{
+  "action": "setParent",
+  "payload": { "targetPath": "/HL_Child", "parentPath": "/HL_Root", "keepWorldPosition": true }
+}'
+# Bridge also accepts aliases: {"gameObject":"...","parent":"..."}
+```
+
+Auto-highlight: By default, write actions will highlight their primary target to aid user visibility.
+- `createGameObject`: highlights the newly created GameObject
+- `instantiatePrefab`: highlights the instantiated scene instance
+- `addComponent`: highlights the target GameObject before adding
+You can override per-call with `payload.highlight=false`. Global defaults are configurable in `Markdown > MCP Settings…` (Auto-highlight write actions, Frame Scene view).
+Additional highlight behaviors:
+- Property/Transform changes highlight the target before applying.
+- Duplicate highlights the duplicate after creation.
+- Delete highlights the target before deleting (no selection after).
+- RemoveComponent and SetSortingLayer highlight the target before changes.
+- Read actions (e.g., getGameObjectDetails/getPrefabDetails/executeUIEvent) can auto-highlight when enabled.
+- Find results can optionally highlight either the first match or multiple up to a limit.
 
 ---
 
@@ -172,6 +229,8 @@ curl -X POST http://localhost:43210 -d '{"action": "setPlayMode", "payload": tru
 Wait for initialization:
 ```bash
 curl -X POST http://localhost:43210 -d '{"action": "wait", "payload": 1.5}'
+# or
+curl -X POST http://localhost:43210 -d '{"action":"wait","payload":{"seconds":1.5}}'
 ```
 
 Simulate a UI click:
@@ -220,6 +279,20 @@ Baseline shipped actions in this package:
 | `addComponent` | Add a component to a GameObject | `AddRemoveComponentPayload` |
 | `removeComponent` | Remove component(s) from GameObject | `AddRemoveComponentPayload` (uses `all`) |
 | `setMultipleProperties` | Batch set multiple properties | `SetMultiplePropertiesPayload` |
+| `highlight` | Select and ping a target (scene object or asset) | `HighlightPayload` |
+| `setParent` | Reparent a GameObject (supports scene root with `/`) | `SetParentPayload` |
+| `createGameObject` | Create a new GameObject in scene | `CreateGameObjectPayload` |
+| `instantiatePrefab` | Instantiate a prefab asset into scene | `InstantiatePrefabPayload` |
+| `setTransform` | Set or adjust transform (move/rotate/scale) | `SetTransformPayload` |
+| `duplicateGameObject` | Duplicate a GameObject | `DuplicateGameObjectPayload` |
+| `deleteGameObject` | Delete a GameObject | `DeleteGameObjectPayload` |
+| `applySceneOperations` | Apply multiple scene operations in one call | `ApplySceneOperationsPayload` |
+| `createGameObject` | Create a new GameObject in scene | `CreateGameObjectPayload` |
+| `instantiatePrefab` | Instantiate a prefab asset into scene | `InstantiatePrefabPayload` |
+| `setTransform` | Set or adjust transform (move/rotate/scale) | `SetTransformPayload` |
+| `duplicateGameObject` | Duplicate a GameObject | `DuplicateGameObjectPayload` |
+| `deleteGameObject` | Delete a GameObject | `DeleteGameObjectPayload` |
+| `applySceneOperations` | Apply multiple scene operations in one call | `ApplySceneOperationsPayload` |
 
 See the end-to-end test workflow for usage context: Section 7.
 
@@ -399,7 +472,32 @@ Pretty‑print JSON responses using `jq` or `python -m json.tool`.
 - Localhost-only: The server listens on `localhost` only. Exposing externally is not supported.
 - Port configuration: Change the port via `Markdown > MCP Settings…` (default `43210`). The server restarts when you change the port if running.
 - Auto-start toggle: Enable/disable in `Markdown > MCP Settings…`.
+- First-request refresh: The server can force `AssetDatabase.Refresh()` and wait for compilation/imports on the first request after a domain reload. Configure in `Markdown > MCP Settings…` (Refresh assets and wait on first request; First-request wait seconds).
 - Response envelopes: All responses are wrapped with `{ ok, result, error?, warnings?, requestId? }`.
-- Async by default: State‑changing actions run async unless `payload.sync` is `true`.
+- Sync by default for write actions: State‑changing actions (e.g., create/instantiate/set/duplicate/delete/applySceneOperations/add/remove component) execute synchronously by default to provide deterministic results to IDE clients. You may still include `payload.sync` (boolean) for compatibility.
+
+## 11. Highlight Settings and Result Contract
+
+Settings (Markdown > MCP Settings…):
+- Auto-highlight write actions (default ON)
+- Frame Scene view on highlight (default ON)
+- Auto-highlight read actions (default ON)
+- Auto-highlight find results (default OFF)
+- Multi-select mode: FirstOnly | UpToLimit (default FirstOnly)
+- Multi-select limit (default 8)
+- Suppress highlight in Play Mode (default OFF)
+- Highlight throttle (ms) (default 150)
+
+Per-call overrides:
+- `payload.highlight` (bool): opt-out or force highlight for an action
+- `payload.highlightFrame` (bool): override framing behavior
+
+Result contract additions:
+- `primaryTargetPath` (string): scene path of main target, when applicable
+- `assetPath` (string): asset path when action targets an asset
+- `targetPaths` (string[]): for multi-target results (e.g., findGameObjects)
+
+Bridge fallback (optional):
+- If `MDMCP_BRIDGE_FOLLOW=1`, the bridge will call `highlight` with `primaryTargetPath` (or first `targetPath`) when the server doesn’t auto-highlight. Disabled by default.
 
 

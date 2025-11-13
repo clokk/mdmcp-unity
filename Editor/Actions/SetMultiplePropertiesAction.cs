@@ -4,6 +4,7 @@ using UnityEditor;
 using UnityEngine;
 using System;
 using System.Collections.Generic;
+using Newtonsoft.Json.Linq;
 
 namespace MCP.Actions
 {
@@ -52,6 +53,29 @@ namespace MCP.Actions
 			if (properties.Count == 0)
 				return ActionResponse.Error("NO_PROPERTIES", "No properties provided to set.");
 
+			// Auto-highlight target before applying
+			bool? highlightOverride = null;
+			bool? frameOverride = null;
+			try
+			{
+				var h = payload.payload?["highlight"];
+				if (h != null && h.Type != JTokenType.Null) highlightOverride = h.Type == JTokenType.Boolean ? h.Value<bool>() : (bool?)null;
+				var hf = payload.payload?["highlightFrame"];
+				if (hf != null && hf.Type != JTokenType.Null) frameOverride = hf.Type == JTokenType.Boolean ? hf.Value<bool>() : (bool?)null;
+			}
+			catch { }
+			try
+			{
+				bool doHl = MCPUtils.ShouldHighlight(highlightOverride, false);
+				if (doHl)
+				{
+					bool frame = MCPUtils.GetFrameSceneViewOverride(frameOverride);
+					var objToSelect = target is Component c ? (UnityEngine.Object)c.gameObject : target;
+					MCPUtils.Highlight(objToSelect, frame);
+				}
+			}
+			catch { }
+
 			Undo.RecordObject(target, "Set Multiple Properties");
 
 			foreach (var kv in properties)
@@ -65,7 +89,9 @@ namespace MCP.Actions
 			return ActionResponse.Ok(new
 			{
 				status = "OK",
-				count = properties.Count
+				count = properties.Count,
+				primaryTargetPath = (target is Component componentOnTarget && componentOnTarget.gameObject != null) ? MCPUtils.GetGameObjectPath(componentOnTarget.gameObject.transform) : (target is GameObject goRef ? MCPUtils.GetGameObjectPath(goRef.transform) : null),
+				assetPath = p.assetPath
 			});
 		}
 

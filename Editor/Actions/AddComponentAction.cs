@@ -3,9 +3,11 @@ using MCP.InternalPayloads;
 using UnityEditor;
 using UnityEngine;
 using System;
+using Newtonsoft.Json.Linq;
 
 namespace MCP.Actions
 {
+	[MCPAction(Description = "Add a component to a GameObject. Synonyms: attach component, add script", ExamplePayload = "{ \"targetPath\": \"/Player\", \"componentName\": \"Rigidbody\" }")]
 	public class AddComponentAction : IEditorAction
 	{
 		public string ActionName => "addComponent";
@@ -26,6 +28,30 @@ namespace MCP.Actions
 			var componentType = MCPUtils.FindType(p.componentName) ?? MCPUtils.FindTypeInAllAssemblies(p.componentName);
 			if (componentType == null)
 				return ActionResponse.Error("TYPE_NOT_FOUND", $"Component type '{p.componentName}' not found.", new { p.componentName });
+
+			// Auto-highlight target before adding component (default on; allow per-call opt-out via payload.highlight=false)
+			bool highlight = true;
+			try { highlight = EditorPrefs.GetBool("MDMCP.AutoHighlightWriteActions", true); } catch { highlight = true; }
+			try
+			{
+				var h = payload.payload?["highlight"];
+				if (h != null && h.Type != JTokenType.Null)
+				{
+					if (h.Type == JTokenType.Boolean) highlight = h.Value<bool>();
+					else
+					{
+						bool parsed;
+						if (bool.TryParse(h.ToString(), out parsed)) highlight = parsed;
+					}
+				}
+			}
+			catch { /* ignore */ }
+			if (highlight)
+			{
+				bool frame = true;
+				try { frame = EditorPrefs.GetBool("MDMCP.FrameSceneViewOnHighlight", true); } catch { frame = true; }
+				MCPUtils.Highlight(targetObject, frame);
+			}
 
 			Undo.AddComponent(targetObject, componentType);
 			EditorUtility.SetDirty(targetObject);

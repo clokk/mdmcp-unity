@@ -4,6 +4,7 @@ using UnityEditor;
 using UnityEngine;
 using System;
 using System.Collections.Generic;
+using Newtonsoft.Json.Linq;
 
 namespace MCP.Actions
 {
@@ -19,6 +20,28 @@ namespace MCP.Actions
 
 			GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(p.prefabPath);
 			if (prefab == null) return ActionResponse.Error("PREFAB_NOT_FOUND", $"Prefab not found at {p.prefabPath}", new { prefabPath = p.prefabPath });
+
+			// Auto-highlight prefab asset in Project
+			bool? highlightOverride = null;
+			bool? frameOverride = null;
+			try
+			{
+				var h = payload.payload?["highlight"];
+				if (h != null && h.Type != JTokenType.Null) highlightOverride = h.Type == JTokenType.Boolean ? h.Value<bool>() : (bool?)null;
+				var hf = payload.payload?["highlightFrame"];
+				if (hf != null && hf.Type != JTokenType.Null) frameOverride = hf.Type == JTokenType.Boolean ? hf.Value<bool>() : (bool?)null;
+			}
+			catch { }
+			try
+			{
+				bool doHl = MCPUtils.ShouldHighlight(highlightOverride, false);
+				if (doHl)
+				{
+					bool frame = MCPUtils.GetFrameSceneViewOverride(frameOverride);
+					MCPUtils.Highlight(prefab, frame);
+				}
+			}
+			catch { }
 
 			var results = new List<object>();
 			GameObject instance = (GameObject)PrefabUtility.InstantiatePrefab(prefab);

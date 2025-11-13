@@ -2,6 +2,8 @@ using MCP;
 using MCP.Payloads;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEditor;
+using Newtonsoft.Json.Linq;
 
 namespace MCP.Actions
 {
@@ -19,6 +21,28 @@ namespace MCP.Actions
 			if (targetObject == null)
 				return ActionResponse.Error("OBJECT_NOT_FOUND", $"GameObject not found at path: {uiEventPayload.targetPath}", new { targetPath = uiEventPayload.targetPath });
 
+			// Optional highlight before executing UI event (read-ish utility)
+			bool? highlightOverride = null;
+			bool? frameOverride = null;
+			try
+			{
+				var h = payload.payload?["highlight"];
+				if (h != null && h.Type != JTokenType.Null) highlightOverride = h.Type == JTokenType.Boolean ? h.Value<bool>() : (bool?)null;
+				var hf = payload.payload?["highlightFrame"];
+				if (hf != null && hf.Type != JTokenType.Null) frameOverride = hf.Type == JTokenType.Boolean ? hf.Value<bool>() : (bool?)null;
+			}
+			catch { }
+			try
+			{
+				bool doHl = MCPUtils.ShouldHighlight(highlightOverride, true);
+				if (doHl)
+				{
+					bool frame = MCPUtils.GetFrameSceneViewOverride(frameOverride);
+					MCPUtils.Highlight(targetObject, frame);
+				}
+			}
+			catch { }
+
 			switch (uiEventPayload.eventType.ToLower())
 			{
 				case "click":
@@ -28,7 +52,7 @@ namespace MCP.Actions
 					return ActionResponse.Error("UNSUPPORTED_EVENT_TYPE", $"Unsupported UI event type: {uiEventPayload.eventType}", new { eventType = uiEventPayload.eventType });
 			}
 
-			return ActionResponse.Ok(new { status = "OK", message = $"Executed '{uiEventPayload.eventType}' on '{uiEventPayload.targetPath}'" });
+			return ActionResponse.Ok(new { status = "OK", message = $"Executed '{uiEventPayload.eventType}' on '{uiEventPayload.targetPath}'", primaryTargetPath = uiEventPayload.targetPath });
 		}
 	}
 }

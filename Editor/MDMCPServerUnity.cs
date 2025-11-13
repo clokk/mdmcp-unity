@@ -26,8 +26,13 @@ public static class MDMCPServerUnity
 
 	private const string AutoStartKey = "MDMCP.AutoStart";
 	private const string PortKey = "MDMCP.Port";
+	private const string RefreshOnceKey = "MDMCP.RefreshAndWaitOnFirstRequest";
+	private const string FirstWaitSecKey = "MDMCP.FirstRequestMaxWaitSeconds";
 
 	public static bool IsRunning => listener.IsListening;
+
+	private static string _instanceId = System.Guid.NewGuid().ToString("N");
+	private static bool _firstRequestRefreshDone = false;
 
     static MDMCPServerUnity()
     {
@@ -130,6 +135,9 @@ public static class MDMCPServerUnity
         _serverThread = new Thread(() => Listen());
         _serverThread.IsBackground = true;
         _serverThread.Start();
+
+		// Register this Unity instance in the local registry for MCP bridges
+		try { RegisterUnityInstance(); } catch (Exception ex) { Debug.LogWarning($"[MDMCP] Failed to register instance: {ex.Message}"); }
     }
 
     [MenuItem("Markdown/Stop MCP Server")]
@@ -145,6 +153,9 @@ public static class MDMCPServerUnity
             }
             _serverThread = null;
         }
+
+		// Unregister this Unity instance
+		try { UnregisterUnityInstance(); } catch (Exception ex) { Debug.LogWarning($"[MDMCP] Failed to unregister instance: {ex.Message}"); }
     }
 
     private static void Listen()
@@ -176,33 +187,57 @@ public static class MDMCPServerUnity
 
                     var command = JsonConvert.DeserializeObject<EditorActionPayload>(commandJson);
                     
-                    // Extract request ID if present
+                    // Extract requestId and payload.sync (parse independently)
                     string requestId = null;
                     bool syncRequested = false;
-                    if (commandJson.Contains("requestId"))
+                    try
                     {
-                        try
+                        var tempObj = Newtonsoft.Json.Linq.JObject.Parse(commandJson);
+                        requestId = tempObj?["requestId"]?.ToString();
+                        var syncToken = tempObj?["payload"]?["sync"];
+                        if (syncToken != null && syncToken.Type != JTokenType.Null)
                         {
-                            var tempObj = JsonConvert.DeserializeObject<dynamic>(commandJson);
-                            requestId = tempObj?.requestId?.ToString();
-                            // payload.sync support
-                            try { syncRequested = (bool)(tempObj?.payload?.sync ?? false); } catch { syncRequested = false; }
+                            // Accept bools and truthy strings like "true"/"True"/"1"
+                            if (syncToken.Type == JTokenType.Boolean)
+                            {
+                                syncRequested = syncToken.Value<bool>();
+                            }
+                            else
+                            {
+                                var s = syncToken.ToString();
+                                syncRequested = string.Equals(s, "true", StringComparison.OrdinalIgnoreCase) || s == "1";
+                            }
                         }
-                        catch { }
                     }
+                    catch { /* ignore parse errors; default syncRequested=false */ }
                     
                     object responseObject = null;
                     
                     // Determine if this action should run synchronously
-					bool defaultSync = (command.action == "wait" || command.action == "getSceneHierarchy" || command.action == "getGameObjectDetails" || command.action == "getPrefabDetails" || command.action == "takeScreenshot" || command.action == "getContext" || command.action == "listActions" || command.action == "findGameObjects" || command.action == "ping");
-                    bool isWriteAction = (command.action == "modifyPrefab" || command.action == "setProperty" || command.action == "setSerializedProperty" || command.action == "duplicateAsset");
-                    bool shouldSync = defaultSync || (isWriteAction && syncRequested);
+					bool defaultSync = (command.action == "wait" || command.action == "getSceneHierarchy" || command.action == "getGameObjectDetails" || command.action == "getPrefabDetails" || command.action == "takeScreenshot" || command.action == "getContext" || command.action == "listActions" || command.action == "listActionsVerbose" || command.action == "findGameObjects" || command.action == "ping" || command.action == "highlight");
+                    bool isWriteAction =
+                        (command.action == "modifyPrefab"
+                        || command.action == "setProperty"
+                        || command.action == "setSerializedProperty"
+                        || command.action == "duplicateAsset"
+                        || command.action == "createGameObject"
+                        || command.action == "instantiatePrefab"
+                        || command.action == "setTransform"
+                        || command.action == "duplicateGameObject"
+                        || command.action == "deleteGameObject"
+                        || command.action == "applySceneOperations"
+                        || command.action == "addComponent"
+                        || command.action == "removeComponent"
+                        || command.action == "setParent");
+                    // Run write actions synchronously by default to make NL flows reliable (honor explicit payload.sync too)
+                    bool shouldSync = syncRequested || defaultSync || isWriteAction;
 
                     if (shouldSync)
                     {
                         var tcs = new TaskCompletionSource<object>();
                         EditorApplication.delayCall += async () => {
                             try {
+                                EnsureRefreshedOnce();
                                 // Logging start for synchronous actions
                                 var actionNameLocal = command.action;
                                 var payloadPreview = MCPLog.BuildPayloadPreviewFromCommandJson(commandJson);
@@ -218,6 +253,11 @@ public static class MDMCPServerUnity
                                 // Wrap legacy responses (that don't use ActionResponse) into envelope
                                 object wrappedResponse = ActionResponse.WrapLegacyResponse(result, requestId);
                                 lock (_lock) { _lastActionResponse = wrappedResponse; }
+                                // After successful write actions, refresh hierarchy visibility immediately
+                                if (isWriteAction)
+                                {
+                                    try { EditorApplication.QueuePlayerLoopUpdate(); EditorApplication.RepaintHierarchyWindow(); } catch { }
+                                }
                                 // Logging end
                                 var durationMs = (DateTime.UtcNow - start).TotalMilliseconds;
                                 try
@@ -225,17 +265,27 @@ public static class MDMCPServerUnity
                                     var j = JObject.FromObject(wrappedResponse);
                                     bool ok = j["ok"]?.Value<bool>() ?? false;
                                     int warningsCount = (j["warnings"] as JArray)?.Count ?? 0;
+                                    // Log result path when available for quick diagnostics
+                                    try
+                                    {
+                                        var path = j["result"]?["path"]?.ToString();
+                                        if (!string.IsNullOrEmpty(path)) Debug.Log($"[MDMCP] Result path: {path}");
+                                    }
+                                    catch { }
                                     MCPLog.ActionEnd(actionNameLocal, requestId, ok, durationMs, warningsCount);
+									try { TelemetryService.LogActionEvent(actionNameLocal, requestId, ok, durationMs, warningsCount, null, null, "http"); } catch { }
                                 }
                                 catch
                                 {
                                     MCPLog.ActionEnd(actionNameLocal, requestId, true, durationMs, 0);
+									try { TelemetryService.LogActionEvent(actionNameLocal, requestId, true, durationMs, 0, null, null, "http"); } catch { }
                                 }
                                 tcs.SetResult(wrappedResponse);
                             } catch (Exception ex) {
                                 object errorResponse = ActionResponse.Error("EXECUTION_ERROR", $"Action execution failed: {ex.Message}", new { exception = ex.ToString() }, requestId);
                                 tcs.SetResult(errorResponse);
                                 MCPLog.ActionEnd(command.action, requestId, false, 0.0, 0);
+								try { TelemetryService.LogActionEvent(command.action, requestId, false, 0.0, 0, "EXECUTION_ERROR", ex.GetType().Name, "http"); } catch { }
                             }
                         };
                         tcs.Task.Wait();
@@ -245,6 +295,7 @@ public static class MDMCPServerUnity
                     {
                         EditorApplication.delayCall += () => {
                             try {
+                                EnsureRefreshedOnce();
                                 var actionNameLocal = command.action;
                                 var payloadPreview = MCPLog.BuildPayloadPreviewFromCommandJson(commandJson);
                                 MCPLog.ActionStart(actionNameLocal, requestId, "async", payloadPreview);
@@ -260,15 +311,18 @@ public static class MDMCPServerUnity
                                     bool ok = j["ok"]?.Value<bool>() ?? false;
                                     int warningsCount = (j["warnings"] as JArray)?.Count ?? 0;
                                     MCPLog.ActionEnd(actionNameLocal, requestId, ok, durationMs, warningsCount);
+									try { TelemetryService.LogActionEvent(actionNameLocal, requestId, ok, durationMs, warningsCount, null, null, "http"); } catch { }
                                 }
                                 catch
                                 {
                                     MCPLog.ActionEnd(actionNameLocal, requestId, true, durationMs, 0);
+									try { TelemetryService.LogActionEvent(actionNameLocal, requestId, true, durationMs, 0, null, null, "http"); } catch { }
                                 }
                                 // Note: async actions don't return their result, but we still respond with acknowledgment
                             } catch (Exception ex) {
                                 Debug.LogError($"[MDMCP] Asynchronous action failed: {ex.Message}");
                                 MCPLog.ActionEnd(command.action, requestId, false, 0.0, 0);
+								try { TelemetryService.LogActionEvent(command.action, requestId, false, 0.0, 0, "EXECUTION_ERROR", ex.GetType().Name, "http"); } catch { }
                             }
                         };
                         responseObject = ActionResponse.Ok(new { status = "Command received and dispatched to main thread." }, null, requestId);
@@ -329,6 +383,9 @@ public static class MDMCPServerUnity
             if (EditorApplication.isPlaying) editorState = "Playing";
             if (EditorApplication.isPaused) editorState = "Paused";
             contextData["editorState"] = editorState;
+            // Editor status flags for bridges to poll readiness
+            try { contextData["editorCompiling"] = EditorApplication.isCompiling; } catch { contextData["editorCompiling"] = false; }
+            try { contextData["editorUpdating"] = EditorApplication.isUpdating; } catch { contextData["editorUpdating"] = false; }
             
             var activeScene = EditorSceneManager.GetActiveScene();
             contextData["activeScene"] = activeScene.IsValid() ? activeScene.name : "No Active Scene";
@@ -374,11 +431,176 @@ public static class MDMCPServerUnity
 		return $"http://localhost:{port}/";
 	}
 
+	private static void EnsureRefreshedOnce()
+	{
+		if (_firstRequestRefreshDone) return;
+		_firstRequestRefreshDone = true;
+		bool enabled = true;
+		try { enabled = EditorPrefs.GetBool(RefreshOnceKey, true); } catch { enabled = true; }
+		if (!enabled) return;
+		try
+		{
+			AssetDatabase.Refresh();
+			float waitSec = 30f;
+			try { waitSec = Mathf.Max(0.0f, EditorPrefs.GetFloat(FirstWaitSecKey, 30f)); } catch { waitSec = 30f; }
+			double end = EditorApplication.timeSinceStartup + waitSec;
+			while ((EditorApplication.isCompiling || EditorApplication.isUpdating) && EditorApplication.timeSinceStartup < end)
+			{
+				System.Threading.Thread.Sleep(100);
+			}
+		}
+		catch (Exception ex)
+		{
+			Debug.LogWarning($"[MDMCP] First-request refresh failed: {ex.Message}");
+		}
+	}
+
 	private static bool IsPackageAssembly(string assemblyName)
 	{
 		// Actions compiled from this package have the asmdef name below
 		return assemblyName == "Clokk.MDMCP.Editor";
 	}
+
+	#region Instance Registry
+	private static string GetInstancesRegistryPath()
+	{
+		string path = null;
+#if UNITY_EDITOR_OSX
+		string home = Environment.GetFolderPath(Environment.SpecialFolder.Personal);
+		path = System.IO.Path.Combine(home, "Library", "Application Support", "MDMCP", "instances.json");
+#elif UNITY_EDITOR_WIN
+		string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+		path = System.IO.Path.Combine(appData, "MDMCP", "instances.json");
+#else
+		string home = Environment.GetFolderPath(Environment.SpecialFolder.Personal);
+		path = System.IO.Path.Combine(home, ".local", "share", "MDMCP", "instances.json");
+#endif
+		try
+		{
+			var dir = System.IO.Path.GetDirectoryName(path);
+			if (!System.IO.Directory.Exists(dir)) System.IO.Directory.CreateDirectory(dir);
+		}
+		catch { /* ignore */ }
+		return path;
+	}
+
+	private static int GetConfiguredPort()
+	{
+		try
+		{
+			int port = EditorPrefs.GetInt(PortKey, 43210);
+			if (port < 1024 || port > 65535) port = 43210;
+			return port;
+		}
+		catch { return 43210; }
+	}
+
+	private static void RegisterUnityInstance()
+	{
+		string path = GetInstancesRegistryPath();
+		var list = new List<Dictionary<string, object>>();
+		try
+		{
+			if (System.IO.File.Exists(path))
+			{
+				var json = System.IO.File.ReadAllText(path);
+				var arr = Newtonsoft.Json.Linq.JArray.Parse(string.IsNullOrWhiteSpace(json) ? "[]" : json);
+				foreach (var j in arr)
+				{
+					try { list.Add(j.ToObject<Dictionary<string, object>>()); } catch { }
+				}
+			}
+		}
+		catch { /* ignore read errors */ }
+
+		// Remove any stale entries for this process or same id
+		int pid = System.Diagnostics.Process.GetCurrentProcess().Id;
+		list = list.Where(e =>
+		{
+			try
+			{
+				string id = e.ContainsKey("id") ? e["id"]?.ToString() : e.GetValueOrDefault("instanceId")?.ToString();
+				int existingPid = 0;
+				if (e.ContainsKey("pid")) int.TryParse(e["pid"]?.ToString(), out existingPid);
+				return id != _instanceId && existingPid != pid;
+			}
+			catch { return true; }
+		}).ToList();
+
+		// Add current
+		string projectPath = System.IO.Path.GetFullPath(System.IO.Path.Combine(Application.dataPath, ".."));
+		string projectName = System.IO.Path.GetFileName(projectPath.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar));
+		string unityAppPath = null;
+#if UNITY_EDITOR_OSX
+		try
+		{
+			// applicationContentsPath points to .../Unity.app/Contents
+			var contents = EditorApplication.applicationContentsPath;
+			if (!string.IsNullOrEmpty(contents))
+			{
+				unityAppPath = System.IO.Path.GetDirectoryName(contents); // The .app bundle path
+			}
+		}
+		catch { /* ignore */ }
+#else
+		try { unityAppPath = EditorApplication.applicationPath; } catch { /* ignore */ }
+#endif
+		var entry = new Dictionary<string, object>
+		{
+			{ "id", _instanceId },
+			{ "pid", pid },
+			{ "projectPath", projectPath },
+			{ "projectName", string.IsNullOrEmpty(projectName) ? "UnityProject" : projectName },
+			{ "port", GetConfiguredPort() },
+			{ "unityVersion", Application.unityVersion },
+			{ "startedAt", DateTime.UtcNow.ToString("o") },
+			{ "unityApplicationPath", unityAppPath }
+		};
+		list.Add(entry);
+
+		try
+		{
+			var jsonOut = Newtonsoft.Json.JsonConvert.SerializeObject(list, Newtonsoft.Json.Formatting.Indented);
+			System.IO.File.WriteAllText(path, jsonOut);
+		}
+		catch (Exception ex)
+		{
+			Debug.LogWarning($"[MDMCP] Failed to write instances registry: {ex.Message}");
+		}
+	}
+
+	private static void UnregisterUnityInstance()
+	{
+		string path = GetInstancesRegistryPath();
+		try
+		{
+			if (!System.IO.File.Exists(path)) return;
+			var json = System.IO.File.ReadAllText(path);
+			var arr = Newtonsoft.Json.Linq.JArray.Parse(string.IsNullOrWhiteSpace(json) ? "[]" : json);
+			var list = new List<Dictionary<string, object>>();
+			int pid = System.Diagnostics.Process.GetCurrentProcess().Id;
+			foreach (var j in arr)
+			{
+				try
+				{
+					var d = j.ToObject<Dictionary<string, object>>();
+					string id = d.ContainsKey("id") ? d["id"]?.ToString() : d.GetValueOrDefault("instanceId")?.ToString();
+					int existingPid = 0;
+					if (d.ContainsKey("pid")) int.TryParse(d["pid"]?.ToString(), out existingPid);
+					if (id == _instanceId || existingPid == pid) continue;
+					list.Add(d);
+				}
+				catch { /* ignore */ }
+			}
+			var jsonOut = Newtonsoft.Json.JsonConvert.SerializeObject(list, Newtonsoft.Json.Formatting.Indented);
+			System.IO.File.WriteAllText(path, jsonOut);
+		}
+		catch (Exception ex)
+		{
+			Debug.LogWarning($"[MDMCP] Failed to unregister instance: {ex.Message}");
+		}
+	}
+	#endregion
 }
 #endif
 

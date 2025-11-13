@@ -5,6 +5,8 @@ using UnityEngine;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
+using UnityEditor;
+using Newtonsoft.Json.Linq;
 
 namespace MCP.Actions
 {
@@ -78,7 +80,33 @@ namespace MCP.Actions
 				activeInHierarchy = go.activeInHierarchy
 			}).ToList();
 
-			return ActionResponse.Ok(new { count = results.Count, results });
+			// Optional highlight for find (default OFF; multi-select policy in settings)
+			bool? highlightOverride = null;
+			bool? frameOverride = null;
+			try
+			{
+				var h = payload.payload?["highlight"];
+				if (h != null && h.Type != JTokenType.Null) highlightOverride = h.Type == JTokenType.Boolean ? h.Value<bool>() : (bool?)null;
+				var hf = payload.payload?["highlightFrame"];
+				if (hf != null && hf.Type != JTokenType.Null) frameOverride = hf.Type == JTokenType.Boolean ? hf.Value<bool>() : (bool?)null;
+			}
+			catch { }
+			try
+			{
+				bool defaultOn = false;
+				try { defaultOn = EditorPrefs.GetBool("MDMCP.AutoHighlightFindActions", false); } catch { defaultOn = false; }
+				bool doHl = highlightOverride ?? defaultOn;
+				if (doHl && results.Count > 0)
+				{
+					bool frame = MCPUtils.GetFrameSceneViewOverride(frameOverride);
+					var (firstOnly, limit) = MCPUtils.GetMultiSelectPolicy();
+					var objs = filtered.Select(go => (UnityEngine.Object)go).ToList();
+					MCPUtils.HighlightMany(objs, frame, limit, firstOnly);
+				}
+			}
+			catch { }
+
+			return ActionResponse.Ok(new { count = results.Count, results, targetPaths = results.Select(r => r.path).ToArray() });
 		}
 
 		private void CollectAllGameObjects(GameObject obj, List<GameObject> collection)

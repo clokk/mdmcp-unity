@@ -32,6 +32,9 @@ namespace MCP.Actions
 			if (EditorApplication.isPlaying) editorState = "Playing";
 			if (EditorApplication.isPaused) editorState = "Paused";
 			contextData["editorState"] = editorState;
+			// Editor status flags for bridges to poll readiness
+			try { contextData["editorCompiling"] = EditorApplication.isCompiling; } catch { contextData["editorCompiling"] = false; }
+			try { contextData["editorUpdating"] = EditorApplication.isUpdating; } catch { contextData["editorUpdating"] = false; }
 			
 			var activeScene = EditorSceneManager.GetActiveScene();
 			contextData["activeScene"] = activeScene.IsValid() ? activeScene.name : "No Active Scene";

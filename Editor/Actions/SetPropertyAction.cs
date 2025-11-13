@@ -3,9 +3,11 @@ using MCP.Payloads;
 using UnityEditor;
 using UnityEngine;
 using System;
+using Newtonsoft.Json.Linq;
 
 namespace MCP.Actions
 {
+	[MCPAction(Description = "Set a public field or property on a component or object. Synonyms: change value, update property", ExamplePayload = "{ \"targetPath\": \"/Player\", \"componentName\": \"PlayerController\", \"propertyName\": \"speed\", \"propertyValue\": \"10.5\" }")]
 	public class SetPropertyAction : IEditorAction
 	{
 		public string ActionName => "setProperty";
@@ -47,11 +49,41 @@ namespace MCP.Actions
 				valueToSet = MCPUtils.ConvertValue(p.propertyValue, memberType);
 			}
 			
+			// Auto-highlight target (component's GameObject or asset) before applying
+			bool? highlightOverride = null;
+			bool? frameOverride = null;
+			try
+			{
+				var h = payload.payload?["highlight"];
+				if (h != null && h.Type != JTokenType.Null) highlightOverride = h.Type == JTokenType.Boolean ? h.Value<bool>() : (bool?)null;
+				var hf = payload.payload?["highlightFrame"];
+				if (hf != null && hf.Type != JTokenType.Null) frameOverride = hf.Type == JTokenType.Boolean ? hf.Value<bool>() : (bool?)null;
+			}
+			catch { }
+			try
+			{
+				bool doHl = MCPUtils.ShouldHighlight(highlightOverride, false);
+				if (doHl)
+				{
+					bool frame = MCPUtils.GetFrameSceneViewOverride(frameOverride);
+					var objToSelect = target is Component c ? (UnityEngine.Object)c.gameObject : target;
+					MCPUtils.Highlight(objToSelect, frame);
+				}
+			}
+			catch { }
+
 			Undo.RecordObject(target, "Set Property");
 			MCPUtils.SetProperty(target, p.propertyName, valueToSet);
 			EditorUtility.SetDirty(target);
 			
-			return ActionResponse.Ok(new { status = "OK", propertyName = p.propertyName, targetName = target.name });
+			string primaryPath = null;
+			try
+			{
+				if (target is Component comp && comp.gameObject != null) primaryPath = MCPUtils.GetGameObjectPath(comp.gameObject.transform);
+				else if (target is GameObject goRef) primaryPath = MCPUtils.GetGameObjectPath(goRef.transform);
+			}
+			catch { }
+			return ActionResponse.Ok(new { status = "OK", propertyName = p.propertyName, targetName = target.name, primaryTargetPath = primaryPath, assetPath = p.assetPath });
 		}
 	}
 }

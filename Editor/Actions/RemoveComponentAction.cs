@@ -4,6 +4,7 @@ using UnityEditor;
 using UnityEngine;
 using System;
 using System.Linq;
+using Newtonsoft.Json.Linq;
 
 namespace MCP.Actions
 {
@@ -27,6 +28,28 @@ namespace MCP.Actions
 			var componentType = MCPUtils.FindType(p.componentName) ?? MCPUtils.FindTypeInAllAssemblies(p.componentName);
 			if (componentType == null)
 				return ActionResponse.Error("TYPE_NOT_FOUND", $"Component type '{p.componentName}' not found.", new { p.componentName });
+
+			// Auto-highlight target before removal
+			bool? highlightOverride = null;
+			bool? frameOverride = null;
+			try
+			{
+				var h = payload.payload?["highlight"];
+				if (h != null && h.Type != JTokenType.Null) highlightOverride = h.Type == JTokenType.Boolean ? h.Value<bool>() : (bool?)null;
+				var hf = payload.payload?["highlightFrame"];
+				if (hf != null && hf.Type != JTokenType.Null) frameOverride = hf.Type == JTokenType.Boolean ? hf.Value<bool>() : (bool?)null;
+			}
+			catch { }
+			try
+			{
+				bool doHl = MCPUtils.ShouldHighlight(highlightOverride, false);
+				if (doHl)
+				{
+					bool frame = MCPUtils.GetFrameSceneViewOverride(frameOverride);
+					MCPUtils.Highlight(targetObject, frame);
+				}
+			}
+			catch { }
 
 			var comps = targetObject.GetComponents(componentType);
 			if (comps == null || comps.Length == 0)
@@ -53,7 +76,8 @@ namespace MCP.Actions
 				status = "OK",
 				removedCount = removed,
 				component = componentType.Name,
-				targetPath = MCPUtils.GetGameObjectPath(targetObject.transform)
+				targetPath = MCPUtils.GetGameObjectPath(targetObject.transform),
+				primaryTargetPath = MCPUtils.GetGameObjectPath(targetObject.transform)
 			});
 		}
 	}

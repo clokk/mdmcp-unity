@@ -3,6 +3,7 @@ using MCP.Payloads;
 using UnityEditor;
 using UnityEngine;
 using System;
+using Newtonsoft.Json.Linq;
 
 namespace MCP.Actions
 {
@@ -50,6 +51,29 @@ namespace MCP.Actions
 			var serializedProperty = serializedObject.FindProperty(p.propertyPath);
 			if (serializedProperty == null)
 				return ActionResponse.Error("PROPERTY_NOT_FOUND", $"Property path '{p.propertyPath}' not found.", new { propertyPath = p.propertyPath, targetType = target.GetType().Name });
+
+			// Auto-highlight target before applying
+			bool? highlightOverride = null;
+			bool? frameOverride = null;
+			try
+			{
+				var h = payload.payload?["highlight"];
+				if (h != null && h.Type != JTokenType.Null) highlightOverride = h.Type == JTokenType.Boolean ? h.Value<bool>() : (bool?)null;
+				var hf = payload.payload?["highlightFrame"];
+				if (hf != null && hf.Type != JTokenType.Null) frameOverride = hf.Type == JTokenType.Boolean ? hf.Value<bool>() : (bool?)null;
+			}
+			catch { }
+			try
+			{
+				bool doHl = MCPUtils.ShouldHighlight(highlightOverride, false);
+				if (doHl)
+				{
+					bool frame = MCPUtils.GetFrameSceneViewOverride(frameOverride);
+					var objToSelect = target is Component c ? (UnityEngine.Object)c.gameObject : target;
+					MCPUtils.Highlight(objToSelect, frame);
+				}
+			}
+			catch { }
 
 			try
 			{
@@ -131,7 +155,14 @@ namespace MCP.Actions
 
 				serializedObject.ApplyModifiedProperties();
 				EditorUtility.SetDirty(target);
-				return ActionResponse.Ok(new { status = "OK", propertyPath = p.propertyPath, propertyType = serializedProperty.propertyType.ToString() });
+				string primaryPath = null;
+				try
+				{
+					if (target is Component comp && comp.gameObject != null) primaryPath = MCPUtils.GetGameObjectPath(comp.gameObject.transform);
+					else if (target is GameObject goRef) primaryPath = MCPUtils.GetGameObjectPath(goRef.transform);
+				}
+				catch { }
+				return ActionResponse.Ok(new { status = "OK", propertyPath = p.propertyPath, propertyType = serializedProperty.propertyType.ToString(), primaryTargetPath = primaryPath, assetPath = p.assetPath });
 			}
 			catch (Exception ex)
 			{
